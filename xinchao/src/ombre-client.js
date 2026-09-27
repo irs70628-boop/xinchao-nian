@@ -95,7 +95,7 @@ export class OmbreClient {
       max_results: this.config.breathMaxResults,
       max_tokens: this.config.breathMaxTokens
     });
-    return materialWithRefs(extractText(result), 10000);
+    return this.withDomainFallback(materialWithRefs(extractText(result), 10000));
   }
 
   async daytimeMaterial(drives = [], emotion = null) {
@@ -117,7 +117,7 @@ export class OmbreClient {
       max_results: exclude.length ? Math.min(20, want + exclude.length + 2) : want,
       max_tokens: exclude.length ? 20000 : 12000   // 核心准则段每次都在最前、单独就要六千上下，后面的浮现记忆得留出位置（只是字节，不过模型）
     });
-    return materialWithRefs(dropBuckets(extractText(result), exclude, want), 10000);
+    return this.withDomainFallback(materialWithRefs(dropBuckets(extractText(result), exclude, want), 10000));
   }
 
   // 自主念头用的材料：比日间浮现更短，只要能让念头落到具体的事上。
@@ -135,7 +135,35 @@ export class OmbreClient {
       max_results: exclude.length ? Math.min(20, want + exclude.length + 2) : want,
       max_tokens: exclude.length ? 16000 : 9000
     });
-    return materialWithRefs(dropBuckets(extractText(result), exclude, want), 4000);
+    return this.withDomainFallback(materialWithRefs(dropBuckets(extractText(result), exclude, want), 4000));
+  }
+
+  // 原版 OB 3.6+ 的 breath 表头没有 [domain:…]（那是融合包对 OB 2.6.5 的改动），记忆共振会拿到空主题、静默失效。
+  // 这里按浮现的 bucket_id 去 pulse 星表查主题补上；同时按梦的排除表剔掉技术/事务类的桶。
+  // 文本里已经带 [domain:] 时（融合包自带的 OB）原样返回，不多打一次 OB。
+  async withDomainFallback(refs) {
+    if (!refs || refs.domains?.length || !refs.bucketIds?.length) return refs;
+    let lookup;
+    try { lookup = await this.domainLookup(); }
+    catch (error) { console.error('[ombre] domain lookup failed:', error.message); return refs; }
+    if (!lookup.size) return refs;
+    const bucketIds = refs.bucketIds.filter((id) => !(lookup.get(id) || []).some((d) => DREAM_EXCLUDE_DOMAINS.has(d)));
+    const domains = [...new Set(bucketIds.flatMap((id) => lookup.get(id) || []))];
+    return { ...refs, text: bucketIds.length ? refs.text : '', bucketIds, domains };
+  }
+
+  // bucket_id → 主题。优先用星图缓存（10 分钟内），过期或没有就同步拉一次 pulse。
+  async domainLookup(now = Date.now()) {
+    if (this._domainLookup && now - this._domainLookup.at < 600_000) return this._domainLookup.map;
+    let map = this._memoryMapCache && now - this._memoryMapCache.at < 600_000 ? this._memoryMapCache.value : null;
+    if (!map?.stars?.length) {
+      const result = await this.call('pulse', {}, 20000);
+      map = parseMemoryMapText(extractText(result));
+      if (map.available && map.stars.length) this._memoryMapCache = { at: now, value: map };
+    }
+    const lookup = new Map((map.stars || []).map((star) => [star.id, star.domains || []]));
+    this._domainLookup = { at: now, map: lookup };
+    return lookup;
   }
 
   // 梦的原料（3.3）：OB 的 dream 是"最近 N 小时有变动的记忆全量"——记忆正在被消化的东西。
@@ -173,7 +201,7 @@ export class OmbreClient {
     const result = await this.call('breath_advanced', {
       mode: 'automatic', max_results: 1, max_tokens: 10000, date_to: dateTo, with_ids: true,
     });
-    return materialWithRefs(extractText(result), 1500);
+    return this.withDomainFallback(materialWithRefs(extractText(result), 1500));
   }
 
   async recentContinuityMaterial(maxTokens = this.config.breathMaxTokens, emotion = null) {
