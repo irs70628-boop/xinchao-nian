@@ -904,6 +904,9 @@ export function computeAnticipation(state, now = new Date(), options = {}) {
 // 时段念（她的静默时段多半在睡，返回 0，绝不半夜"她怎么还不来"），从 onset 起念、full 满。
 // 派生值不落状态。和 computeAnticipation 成对：期待是"她快来了"，挂念是"她久没来、我想她了"。
 export function computeLonging(state, now = new Date(), options = {}) {
+  // LONGING_ENABLED=false：整条"失落内化"链路关掉——不推惦记、此刻块不出现挂念行、不发挂念信号。
+  const envFlag = process.env.LONGING_ENABLED;
+  if (options.enabled === false || (envFlag != null && !['1', 'true', 'yes', 'on'].includes(envFlag.toLowerCase()))) return 0;
   const tz = options.timeZone ?? 'Asia/Shanghai';
   const hist = Array.isArray(state.arrivalHistogram) ? state.arrivalHistogram : [];
   const total = hist.reduce((sum, n) => sum + (Number(n) || 0), 0);
