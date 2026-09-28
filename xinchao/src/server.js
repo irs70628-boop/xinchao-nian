@@ -25,6 +25,7 @@ import { CabinStore } from './cabin-store.js';
 import { boardEnabled, postBoardMessage, readBoardMessages } from './board-client.js';
 import { SYSTEM_VERSION } from './version.js';
 import { memoryConnectionState } from './connection-diagnostics.js';
+import { AutoPresence, autoPresenceConfig } from './auto-presence.js';
 import { PersonalityStore, computePersonalityStats } from './personality-store.js';
 
 // 情绪 → 记忆：只在开关打开时把此刻情绪坐标交给 OB 做共振排序。
@@ -56,6 +57,7 @@ const dashboardAuth = new DashboardAuth({
 });
 const bridgeQueue = new BridgeQueue(config.bridge.statePath, config.bridge);
 const cabin = new CabinStore(config.cabin.statePath, config.cabin);
+const autoPresence = new AutoPresence(autoPresenceConfig());
 const personality = new PersonalityStore(config.personalityPath);
 const bridgeStreams = new Set();
 await oauth.init();
@@ -1410,6 +1412,15 @@ const server = createServer(async (request, response) => {
           return ombre.call(name, stamped.args);
         },
       });
+      if (payload?.method === 'tools/call' && result.status === 200 && !result.body?.result?.isError) {
+        const presence = autoPresence.decide(payload?.params?.name, sessionId);
+        if (presence) {
+          try {
+            const recorded = await recordConversationEvent(presence, 'mcp');
+            log('auto_presence', { tool: String(payload.params.name).slice(0, 80), applied: Boolean(recorded.interaction?.applied), reasonCode: recorded.interaction?.reasonCode ?? null, revision: recorded.revision });
+          } catch (error) { log('auto_presence_failed', { message: error.message }); }
+        }
+      }
       if (payload?.method === 'initialize' || payload?.method === 'tools/call') {
         log('mcp_request', {
           method: payload.method,
@@ -1518,7 +1529,7 @@ server.listen(config.port, '0.0.0.0', async () => {
     }
   } catch (error) { log('pending_migration_failed', { message: error.message }); }
   if (config.bridge.enabled) await bridgeQueue.init();
-  log('service_started', { port: config.port, shadow: config.shadowMode, modelEnabled: config.model.enabled, barkEnabled: config.bark.enabled, bridgeEnabled: config.bridge.enabled });
+  log('service_started', { port: config.port, shadow: config.shadowMode, modelEnabled: config.model.enabled, barkEnabled: config.bark.enabled, bridgeEnabled: config.bridge.enabled, autoPresence: autoPresence.enabled ? autoPresence.minutes : false });
 });
 
 const timer = setInterval(() => runCycle().catch((error) => log('cycle_failed', { message: error.message })), config.settleIntervalMinutes * 60_000);
