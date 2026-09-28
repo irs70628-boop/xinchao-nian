@@ -196,7 +196,34 @@ export class ModelClient {
     return { message: String(parsed.message ?? '').slice(0, 900), source: 'model' };
   }
 
-  request(body) {
+  // `thinking: {type:'disabled'}` 是 DeepSeek/GLM 的私有参数。Gemini 等严格的 OpenAI 兼容端点
+  // 遇到不认识的字段直接回 400（连带 classifyInteraction、梦、念头全部失败）。
+  // 这里统一处理：Gemini 换成它认的 reasoning_effort；任何端点回 400/422 时，
+  // 依次去掉非标准字段再试，最后才把错误抛给调用方。
+  async request(body) {
+    const payload = { ...body };
+    if (/generativelanguage\.googleapis\.com/.test(String(this.config.baseUrl)) && payload.thinking) {
+      delete payload.thinking;
+      payload.reasoning_effort = 'none';
+    }
+    const attempts = [
+      payload,
+      stripFields(payload, ['thinking', 'reasoning_effort']),
+      stripFields(payload, ['thinking', 'reasoning_effort', 'response_format']),
+    ];
+    let response;
+    let last = null;
+    for (const attempt of attempts) {
+      const key = JSON.stringify(Object.keys(attempt).sort());
+      if (key === last) continue;
+      last = key;
+      response = await this.post(attempt);
+      if (response.ok || ![400, 422].includes(response.status)) return response;
+    }
+    return response;
+  }
+
+  post(body) {
     return fetch(`${this.config.baseUrl}/chat/completions`, {
       method: 'POST',
       headers: { Authorization: `Bearer ${this.config.apiKey}`, 'Content-Type': 'application/json' },
@@ -281,4 +308,10 @@ function parseJson(text) {
     if (!match) throw new Error('model returned no JSON object');
     return JSON.parse(match[0]);
   }
+}
+
+function stripFields(body, fields) {
+  const copy = { ...body };
+  for (const field of fields) delete copy[field];
+  return copy;
 }

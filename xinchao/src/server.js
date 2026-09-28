@@ -1406,10 +1406,16 @@ const server = createServer(async (request, response) => {
         },
         // 情绪 → 记忆：他经网关调 breath/hold 没自己给坐标时，替他带上此刻情绪（grow 不碰）。
         callOb: async (name, args) => {
-          if (!config.ombre.emotionStamp) return ombre.call(name, args);
+          const started = Date.now();
+          const timeoutMs = config.ombre.toolTimeoutMs;
+          const run = async (callArgs) => {
+            try { return await ombre.call(name, callArgs, timeoutMs); }
+            finally { log('ob_proxy_call', { tool: String(name).slice(0, 40), ms: Date.now() - started }); }
+          };
+          if (!config.ombre.emotionStamp) return run(args);
           const stamped = stampEmotionArgs(name, args, await store.read());
           if (stamped.stamped) log('ombre_emotion_stamped', { tool: String(name).slice(0, 40), ...stamped.coords });
-          return ombre.call(name, stamped.args);
+          return run(stamped.args);
         },
       });
       if (payload?.method === 'tools/call' && result.status === 200 && !result.body?.result?.isError) {
