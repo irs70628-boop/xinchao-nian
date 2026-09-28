@@ -19,6 +19,9 @@ export class AutoPresence {
     this.lastAt = 0; // 上次自动记或他自己记 xinchao_event 的时间
   }
 
+  // 这笔没生效（例如当天上限已满）时调用：不占用窗口，下一次调用工具就再试。
+  release() { this.lastAt = 0; }
+
   // 返回 null = 这次不记；否则返回要交给 recordConversationEvent 的事件。
   decide(toolName, sessionId, now = new Date()) {
     if (!this.enabled) return null;
@@ -28,9 +31,11 @@ export class AutoPresence {
     if (name === 'xinchao_event') { this.lastAt = nowMs; return null; }
     if (nowMs - this.lastAt < this.minutes * 60_000) return null;
     this.lastAt = nowMs;
-    const bucket = Math.floor(nowMs / (this.minutes * 60_000));
+    // 每次决定记一笔都用全新的 event_id。之前按 30 分钟分桶，被上限挡下的那笔会占住整个桶，
+    // 同一桶里的下一次就被当成重复事件丢掉。去重交给上面的时间窗，不靠 event_id。
+    this.seq = (this.seq ?? 0) + 1;
     return {
-      eventId: `auto-presence-${bucket}`,
+      eventId: `auto-presence-${nowMs}-${this.seq}`,
       sessionId: sessionId || undefined,
       interactionType: 'companionship',
     };

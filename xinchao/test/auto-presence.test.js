@@ -30,8 +30,11 @@ test('an explicit xinchao_event resets the window and is never doubled', () => {
   assert.ok(p.decide('xinchao_context', 'sess', at(35)));
 });
 
-test('event ids are stable within a window so retries dedupe', () => {
-  const a = new AutoPresence({ enabled: true, minutes: 30 }).decide('pulse', 's', at(1));
-  const b = new AutoPresence({ enabled: true, minutes: 30 }).decide('pulse', 's', at(2));
-  assert.equal(a.eventId, b.eventId);
+test('a presence blocked by the daily cap does not block the next one (regression)', () => {
+  const p = new AutoPresence({ enabled: true, minutes: 30 });
+  const blocked = p.decide('xinchao_context', 's', at(44));
+  p.release();
+  const next = p.decide('xinchao_context', 's', at(50));
+  assert.ok(next);
+  assert.notEqual(next.eventId, blocked.eventId);
 });

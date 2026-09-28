@@ -1417,6 +1417,7 @@ const server = createServer(async (request, response) => {
         if (presence) {
           try {
             const recorded = await recordConversationEvent(presence, 'mcp');
+            if (!recorded.interaction?.applied) autoPresence.release();
             log('auto_presence', { tool: String(payload.params.name).slice(0, 80), applied: Boolean(recorded.interaction?.applied), reasonCode: recorded.interaction?.reasonCode ?? null, revision: recorded.revision });
           } catch (error) { log('auto_presence_failed', { message: error.message }); }
         }
