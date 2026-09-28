@@ -152,7 +152,9 @@ function applyInteractionOutcome(state, type, now, options = {}) {
       affectedDrives: [],
     };
   }
-  const maxPerDay = clamp(Number(options.maxInteractionEffectsPerDay ?? 24), 1, 96);
+  // config.js 里这个键叫 maxEffectsPerDay（INTERACTION_MAX_EFFECTS_PER_DAY），这里之前只认
+  // maxInteractionEffectsPerDay，导致环境变量从来没生效、上限永远是 24。两个名字都认。
+  const maxPerDay = clamp(Number(options.maxInteractionEffectsPerDay ?? options.maxEffectsPerDay ?? 24), 1, 96);
   const timeZone = options.timeZone ?? 'Asia/Shanghai';
   const { day } = localDayAndHour(now, timeZone);
   const used = Number(state.interactionUsage[day] ?? 0);
