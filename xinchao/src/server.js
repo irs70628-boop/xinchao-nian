@@ -1367,6 +1367,17 @@ const server = createServer(async (request, response) => {
         awareness: async (input) => handleAwareness(input),
         box: async (input) => handleBox(input),
         toolsHide: config.toolsHide,
+        // xinchao_status：只读，和 /v1/now 同一份"此刻"块，再加一行连线状况；不记投递、不动状态。
+        status: async () => {
+          const state = await store.read();
+          const now = new Date();
+          let boxCount = 0; let boxSurfaced = 0;
+          try { boxCount = await blackBox.count(now); boxSurfaced = (await blackBox.surfaced(now)).length; } catch { boxCount = 0; }
+          const block = buildNowCompact(state, now, { timeZone: config.settle.timeZone, boxCount, boxSurfaced, awarenessReviewWeekday: config.awareness.reviewWeekday });
+          const memory = memoryConnectionState(config);
+          const text = [block.text || renderNowLine(state, now), `连线：心潮 ${SYSTEM_VERSION} · 记忆库 ${memory === 'ob_configured' ? '已接' : memory}`].filter(Boolean).join('\n');
+          return { text, ok: block.ok, revision: block.revision, generatedAt: block.generatedAt, memory };
+        },
         // 每个 xinchao_* 工具回应末尾的"此刻"一行（官方客户端没有钩子，靠这个拿状态）
         nowLine: async () => {
           const state = await store.read();

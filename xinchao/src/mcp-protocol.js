@@ -20,7 +20,32 @@ const INTERACTION_TYPES = new Set([
 // 日常/日记整理走 grow，重要瞬间可用 hold 但必须写 meaning）。
 // 走代理转发到 OB；schema 在 tools/list 时动态从 OB 拉，永不漂移。
 export const OB_PROXY_TOOLS = ['breath', 'hold', 'grow', 'trace', 'forget', 'dream', 'anchor', 'release', 'I', 'pulse'];
-const OB_PROXY_SET = new Set(OB_PROXY_TOOLS);
+// 部署端可用 XINCHAO_OB_PROXY_EXTRA 多带几个 OB 工具（逗号分隔，例如 breath_search,breath_advanced,plan）。
+// purge / restore 这类不可逆或管理向的工具永远不经网关暴露。
+const OB_PROXY_DENY = new Set(['purge', 'restore']);
+export function obProxyTools(extra = process.env.XINCHAO_OB_PROXY_EXTRA ?? '') {
+  const more = String(extra).split(',').map((item) => item.trim()).filter((item) => /^[A-Za-z_][A-Za-z0-9_]{0,63}$/.test(item) && !OB_PROXY_DENY.has(item));
+  return [...new Set([...OB_PROXY_TOOLS, ...more])];
+}
+const OB_PROXY_SET = new Set(obProxyTools());
+
+// OB 自己没声明 annotations 时（原版 OB 3.6+ 一个都没有），网关替它补上。
+// ChatGPT 开发者模式只把 readOnlyHint=true 的工具当唯读，其余每次调用都要人按确认。
+// 只有真正不改记忆正文/元数据的读取类才标唯读（breath 只更新激活计数）。
+const OB_READ_ONLY_TOOLS = new Set(['breath', 'breath_search', 'breath_advanced', 'pulse', 'letter_read']);
+const OB_DESTRUCTIVE_TOOLS = new Set(['forget', 'release']);
+export function obAnnotations(tool) {
+  if (tool?.annotations && typeof tool.annotations === 'object' && 'readOnlyHint' in tool.annotations) return tool.annotations;
+  const name = String(tool?.name ?? '');
+  const readOnly = OB_READ_ONLY_TOOLS.has(name);
+  return {
+    ...(tool?.annotations ?? {}),
+    readOnlyHint: readOnly,
+    destructiveHint: !readOnly && OB_DESTRUCTIVE_TOOLS.has(name),
+    idempotentHint: readOnly,
+    openWorldHint: false,
+  };
+}
 
 // 对外用中文标题 + 中文说明（内部名保持不变，用于协议路由）。让机看到的是"浮现记忆"而不是"breath"。
 const OB_TOOL_LABELS = {
@@ -37,10 +62,18 @@ const OB_TOOL_LABELS = {
 };
 function relabelOb(tool) {
   const lab = OB_TOOL_LABELS[tool?.name];
-  return lab ? { ...tool, title: lab.title, description: lab.description } : tool;
+  const annotated = { ...tool, annotations: obAnnotations(tool) };
+  return lab ? { ...annotated, title: lab.title, description: lab.description } : annotated;
 }
 
 export const XINCHAO_TOOLS = [
+  {
+    name: 'xinchao_status',
+    title: '看看此刻的自己',
+    description: '只读：返回你此刻的状态（驱力、情绪、挂念/期待、梦与匣子提醒）以及心潮与记忆库的连线状况。不记任何事件、不改任何数值，随时可以调。',
+    inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
   {
     name: 'xinchao_context',
     title: '获取心潮上下文',
@@ -578,7 +611,7 @@ function personalityReflectArgs(args = {}) {
 // 官方客户端没有钩子：每个 xinchao_* 工具的回应末尾挂一行"此刻"，他每调一次工具就拿到一次自己的状态。
 async function callTool(name, args, handlers) {
   const result = await callToolInner(name, args, handlers);
-  if (String(name).startsWith('xinchao_') && name !== 'xinchao_context' && typeof handlers.nowLine === 'function' && result && !result.isError) {
+  if (String(name).startsWith('xinchao_') && name !== 'xinchao_context' && name !== 'xinchao_status' && typeof handlers.nowLine === 'function' && result && !result.isError) {
     try {
       const line = await handlers.nowLine();
       if (line && Array.isArray(result.content) && result.content[0]?.type === 'text') result.content[0].text = `${result.content[0].text}\n\n${line}`;
@@ -589,6 +622,11 @@ async function callTool(name, args, handlers) {
 
 async function callToolInner(name, args, handlers) {
   const fallbackSessionId = handlers.defaultSessionId ?? '';
+  if (name === 'xinchao_status') {
+    if (typeof handlers.status !== 'function') throw new Error('状态读取未接入');
+    const status = await handlers.status();
+    return toolText(String(status?.text || '（此刻没有可显示的状态）'), status);
+  }
   if (name === 'xinchao_context') {
     const envelope = await handlers.context(contextArgs(args, fallbackSessionId));
     const text = envelope.delivered
