@@ -1519,7 +1519,7 @@ const server = createServer(async (request, response) => {
   }
 });
 
-server.listen(config.port, '0.0.0.0', async () => {
+server.listen(config.port, config.host, async () => {
   await store.read();
   await cabin.init();
   await blackBox.init();

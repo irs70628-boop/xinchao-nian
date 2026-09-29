@@ -17,6 +17,8 @@ export function loadConfig() {
   return {
     identity: { agentName, notificationRecipient },
     port: number('PORT', 18110, 1, 65535),
+    // 监听地址。默认仍是 0.0.0.0（现有部署行为不变）；只想本机访问的实例设 HOST=127.0.0.1。
+    host: String(process.env.HOST ?? '').trim() || '0.0.0.0',
     serviceToken: process.env.SERVICE_TOKEN ?? '',
     statePath: process.env.STATE_PATH ?? '/app/state/state.json',
     personalityPath: process.env.PERSONALITY_PATH ?? '/app/state/personality.json',
